@@ -19,9 +19,26 @@ class LogMonitor(FileSystemEventHandler):
         self.kill_count = 0
 
     def parse_kill(self, line):
-        # Pattern to match kill entries with killer information and zone
+        # First try to match with killer information
         pattern = r'<Actor Death>.+?\'([^\']+)\'.+?zone \'([^\']+)\'.+?killed by \'([^\']+)\''
         match = re.search(pattern, line)
+        
+        if not match:
+            # Try to match without killer information
+            pattern = r'<Actor Death>.+?\'([^\']+)\'.+?zone \'([^\']+)\''
+            match = re.search(pattern, line)
+            if match:
+                victim = match.group(1)
+                zone = match.group(2)
+                killer = "SKILL ISSUE"  # When no killer is found
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Insert with alternating row colors and special tag for skill issue
+                tags = ('kill_even', 'skill_issue') if self.kill_count % 2 == 0 else ('kill_odd', 'skill_issue')
+                self.kills_tree.insert('', 0, values=(victim, killer, timestamp, zone), tags=tags)
+                self.kill_count += 1
+                return
+
         if match:
             victim = match.group(1)
             zone = match.group(2)
@@ -31,6 +48,11 @@ class LogMonitor(FileSystemEventHandler):
             # Insert with alternating row colors
             tags = ('kill_even',) if self.kill_count % 2 == 0 else ('kill_odd',)
             self.kills_tree.insert('', 0, values=(victim, killer, timestamp, zone), tags=tags)
+            self.kill_count += 1
+            
+            # Update HUD if it exists
+            if hasattr(self.text_widget.master, 'sync_hud_kills'):
+                self.text_widget.master.sync_hud_kills()
 
     def check_file(self):
         try:
@@ -321,6 +343,14 @@ class Application(tk.Tk):
         self.pause_button.pack(side='left', padx=5)
         self.log_paused = False
         
+        self.hud_button = self.create_custom_button(
+            self.controls_frame,
+            "Pop HUD",
+            self.toggle_hud
+        )
+        self.hud_button.pack(side='left', padx=5)
+        self.hud_window = None
+        
         self.clear_button = self.create_custom_button(
             self.controls_frame,
             "Clear Kills Log",
@@ -375,8 +405,9 @@ class Application(tk.Tk):
         self.kills_tree.column('Time', width=100, minwidth=100, anchor='center')
         self.kills_tree.column('Zone', width=250, minwidth=150)
         
-        # Configure clickable names
+        # Configure clickable names and special tags
         self.kills_tree.tag_configure('clickable', foreground=self.current_theme['select_bg'])
+        self.kills_tree.tag_configure('skill_issue', foreground='#FF5555')  # Bright red for skill issue
         self.kills_tree.bind('<Button-1>', self.on_tree_click)
         
         # Add tooltip
@@ -495,6 +526,134 @@ class Application(tk.Tk):
             self.pause_button.configure(text="Pause Log")
             # Ensure we're at the end of the log when resuming
             self.log_text.see(tk.END)
+
+    def toggle_hud(self):
+        if self.hud_window and self.hud_window.winfo_exists():
+            self.hud_window.destroy()
+            self.hud_window = None
+            self.hud_button.configure(text="Pop HUD")
+        else:
+            self.create_hud_window()
+            self.hud_button.configure(text="Close HUD")
+
+    def create_hud_window(self):
+        # Create a new toplevel window
+        self.hud_window = tk.Toplevel(self)
+        self.hud_window.title("Kill Feed HUD")
+        
+        # Make it frameless
+        self.hud_window.overrideredirect(True)
+        
+        # Set window attributes
+        self.hud_window.attributes('-topmost', True)  # Always on top
+        self.hud_window.attributes('-alpha', 0.85)    # Slight transparency
+        
+        # Create main frame with dark theme
+        main_frame = tk.Frame(
+            self.hud_window,
+            bg='#1a1b1e',
+            highlightthickness=1,
+            highlightbackground='#663399'  # Purple border
+        )
+        main_frame.pack(fill='both', expand=True)
+        
+        # Add a title bar
+        title_frame = tk.Frame(main_frame, bg='#663399')
+        title_frame.pack(fill='x')
+        
+        # Add title label
+        title_label = tk.Label(
+            title_frame,
+            text="Star Citizen Kill Feed",
+            bg='#663399',
+            fg='white',
+            font=('Segoe UI', 10, 'bold')
+        )
+        title_label.pack(side='left', padx=5, pady=2)
+        
+        # Add close button
+        close_btn = tk.Label(
+            title_frame,
+            text="×",
+            bg='#663399',
+            fg='white',
+            font=('Segoe UI', 10, 'bold'),
+            cursor='hand2'
+        )
+        close_btn.pack(side='right', padx=5, pady=2)
+        close_btn.bind('<Button-1>', lambda e: self.toggle_hud())
+        
+        # Create a treeview for kills
+        self.hud_tree = ttk.Treeview(
+            main_frame,
+            columns=('Victim', 'Killer', 'Time'),
+            show='headings',
+            style='Treeview',
+            height=5
+        )
+        
+        # Configure columns
+        self.hud_tree.heading('Victim', text='Victim')
+        self.hud_tree.heading('Killer', text='Killed By')
+        self.hud_tree.heading('Time', text='Time')
+        
+        self.hud_tree.column('Victim', width=150)
+        self.hud_tree.column('Killer', width=150)
+        self.hud_tree.column('Time', width=100)
+        
+        # Style the treeview
+        style = ttk.Style()
+        style.configure(
+            'Treeview',
+            background='#1a1b1e',
+            foreground='white',
+            fieldbackground='#1a1b1e'
+        )
+        style.configure(
+            'Treeview.Heading',
+            background='#2a2b2e',
+            foreground='white'
+        )
+        
+        self.hud_tree.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Make window draggable
+        title_frame.bind('<Button-1>', self.start_drag)
+        title_frame.bind('<B1-Motion>', self.do_drag)
+        
+        # Position the window in the top-right corner initially
+        screen_width = self.winfo_screenwidth()
+        self.hud_window.geometry(f"+{screen_width-420}+10")
+        
+        # Configure tags for special styling
+        self.hud_tree.tag_configure('skill_issue', foreground='#FF5555')
+        
+        # Sync current kills to HUD
+        self.sync_hud_kills()
+        
+    def start_drag(self, event):
+        self._drag_data = {'x': event.x, 'y': event.y}
+
+    def do_drag(self, event):
+        if self.hud_window:
+            x = self.hud_window.winfo_x() + (event.x - self._drag_data['x'])
+            y = self.hud_window.winfo_y() + (event.y - self._drag_data['y'])
+            self.hud_window.geometry(f"+{x}+{y}")
+
+    def sync_hud_kills(self):
+        if not self.hud_window or not self.hud_window.winfo_exists():
+            return
+            
+        # Clear current HUD entries
+        for item in self.hud_tree.get_children():
+            self.hud_tree.delete(item)
+            
+        # Get the last 5 kills from the main tree
+        main_items = self.kills_tree.get_children()[:5]
+        for item in reversed(main_items):
+            values = self.kills_tree.item(item)['values']
+            tags = self.kills_tree.item(item)['tags']
+            self.hud_tree.insert('', 'end', values=values[:3], tags=tags)
 
     def check_updates(self):
         if self.monitor and not self.log_paused:
