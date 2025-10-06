@@ -26,7 +26,7 @@ class LogMonitor(FileSystemEventHandler):
             victim = match.group(1)
             zone = match.group(2)
             killer = match.group(3)
-            timestamp = time.strftime("%H:%M:%S")
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             
             # Insert with alternating row colors
             tags = ('kill_even',) if self.kill_count % 2 == 0 else ('kill_odd',)
@@ -77,16 +77,16 @@ class Application(tk.Tk):
         self.dark_theme = {
             'bg': '#1a1b1e',
             'fg': '#ffffff',
-            'select_bg': '#3b82f6',
+            'select_bg': '#663399',
             'select_fg': '#ffffff',
             'tree_bg': '#2a2b2e',
             'tree_fg': '#ffffff',
-            'button_bg': '#3b82f6',
+            'button_bg': '#663399',
             'button_fg': '#ffffff',
             'text_bg': '#1a1b1e',
             'text_fg': '#e2e8f0',
             'frame_bg': '#2a2b2e',
-            'hover_bg': '#4b92f7',
+            'hover_bg': '#7a3db8',
             'border': '#3b3b3b',
             'alternate_row': '#222326'
         }
@@ -103,7 +103,7 @@ class Application(tk.Tk):
             'text_bg': '#ffffff',
             'text_fg': '#1a1b1e',
             'frame_bg': '#f1f5f9',
-            'hover_bg': '#4b92f7',
+            'hover_bg': '#7a3db8',
             'border': '#e2e8f0',
             'alternate_row': '#f8fafc'
         }
@@ -184,9 +184,9 @@ class Application(tk.Tk):
         if self.tooltip:
             self.tooltip.destroy()
         
-        x, y, _, _ = widget.bbox("insert")
-        x = x + widget.winfo_rootx() + 25
-        y = y + widget.winfo_rooty() + 20
+        # Get mouse position relative to screen
+        x = self.winfo_pointerx() + 15
+        y = self.winfo_pointery() + 10
         
         self.tooltip = tk.Toplevel(self)
         self.tooltip.wm_overrideredirect(True)
@@ -282,8 +282,12 @@ class Application(tk.Tk):
 
     def toggle_log_visibility(self):
         if self.log_frame.winfo_viewable():
+            current_height = self.winfo_height()
+            log_height = self.log_frame.winfo_height()
             self.log_frame.pack_forget()
             self.toggle_log_button.configure(text="Show Log")
+            # Adjust window size when hiding log
+            self.geometry(f"{self.winfo_width()}x{current_height - log_height}")
         else:
             self.log_frame.pack(expand=True, fill='both', padx=10, pady=(0, 10))
             self.toggle_log_button.configure(text="Hide Log")
@@ -308,6 +312,14 @@ class Application(tk.Tk):
             self.toggle_theme
         )
         self.theme_button.pack(side='left', padx=(0, 5))
+
+        self.pause_button = self.create_custom_button(
+            self.controls_frame,
+            "Pause Log",
+            self.toggle_pause
+        )
+        self.pause_button.pack(side='left', padx=5)
+        self.log_paused = False
         
         self.clear_button = self.create_custom_button(
             self.controls_frame,
@@ -475,8 +487,17 @@ class Application(tk.Tk):
         except Exception as e:
             self.log_text.insert(tk.END, f"Error setting up file monitoring: {str(e)}\n")
 
+    def toggle_pause(self):
+        self.log_paused = not self.log_paused
+        if self.log_paused:
+            self.pause_button.configure(text="Resume Log")
+        else:
+            self.pause_button.configure(text="Pause Log")
+            # Ensure we're at the end of the log when resuming
+            self.log_text.see(tk.END)
+
     def check_updates(self):
-        if self.monitor:
+        if self.monitor and not self.log_paused:
             self.monitor.check_file()
         self.after(100, self.check_updates)  # Schedule next check in 100ms
 
